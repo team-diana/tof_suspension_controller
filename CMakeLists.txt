@@ -14,12 +14,12 @@ catkin_python_setup()
 
 add_message_files(
   FILES
-  Status.msg
+  HeightmapRequest.msg
 )
 
-add_service_files(
-  FILES
-)
+#add_service_files(
+#  FILES
+#)
 
 generate_messages(
   DEPENDENCIES

@@ -22,13 +22,13 @@ import random
 %matplotlib inline
 
 import rospy
-#import tf
 
 from std_msgs.msg import Float64
 from geometry_msgs.msg import PointStamped
 from heightmap.srv import Query
 
 from suspension_controller.constants import constants
+from suspension_controller.msg import HeightmapRequest
 
 class ToFSuspensionController:
     def __init__(self):
@@ -48,29 +48,63 @@ class ToFSuspensionController:
         rospy.wait_for_service('heightmap_query')
         self.heightmap_query_srv = rospy.ServiceProxy('heightmap_query', Query)
 
-        #        self.tf_listener = tf.TransformListener()
-        #        self.tf_broadcaster = tf.TransformBroadcaster()
-
     def __unpublish(self):
-        #        self.heightmap_sub.unregister()
         self.wheel1_cmd_pub.unregister()
         self.wheel2_cmd_pub.unregister()
         self.wheel3_cmd_pub.unregister()
         self.wheel4_cmd_pub.unregister()
 
-    def get_heightmap(self, x, y):
+    def get_heightmap(self, wheel_id):
+        ## XXX: check these numbers with the rover
+        if wheel_id == 1:
+            wheel_name = 'f_r'
+        elif wheel_id == 2:
+            wheel_name = 'f_l'
+        elif wheel_id == 3:
+            wheel_name = 'b_r'
+        elif wheel_id == 4:
+            wheel_name = 'b_l'
+        else:
+            rospy.logwarn("incorrect wheel id provided, use 1-4 values only")
+            return []
+
         corner = PointStamped()
-        corner.point.x = x
-        corner.point.y = y
-        
+        corner.point.x = 0
+        corner.point.y = 0
+        corner.header.frame_id = 'rover_amalia_leg_wheel' % wheel_name
+
+        req = HeightmapRequest()
+
+        # Note we use x=1 because we use a strip as the rover cannot move sideways directly
+        # y_samples chosen arbitrarily
+        req.corner = corner
+        req.x_size = 1
+        req.y_size = contants.ARM_LENGTH
+        req.x_samples = 1
+        req.y_samples = 1000
+
         res = heightmap_query_srv(corner=corner)
         self.sizex =  res.x_samples
         self.sizey = res.y_samples
         self.heightmap = np.array(res.map, dtype=np.float64)
 
-    def find_theta(self, height, hmap_x, hmap_y, eps=0.05):
+    def get_heightmaps(self):
+        heightmaps = []
+
+        for i in range(1, 4):
+            hm = self.get_heightmap(i)
+            if not hm:
+                rospy.logwarn("get_heightmaps error getting correct maps")
+                return []
+            ## XXX WRONG dx=1
+            heightmaps.append(hm)
+
+        return heightmaps
+
+    def find_theta(self, height, hmap, eps=0.05):
         thetas = np.linspace(0.1, np.pi/2, 1000)
-        dx = np.abs(hmap_x[1] - hmap_x[0])
+        dx = 1
+#        dx = np.abs(hmap_x[1] - hmap_x[0])
         for th in thetas:
             # compute the wheel x position
             x = constants.ARM_LENGTH * np.sin(th)
@@ -78,7 +112,7 @@ class ToFSuspensionController:
             # compute the wheel height from the requested height
             y = self.req_height - constants.ARM_LENGTH * np.cos(th)
             # distance from terrain:
-            e = np.abs(hmap_y[i] - y)
+            e = np.abs(hmap[i] - y)
             if e < eps:
                 # ok, we have found a good angle. But are the
                 # constraint satisfied?
@@ -98,9 +132,9 @@ class ToFSuspensionController:
 
     def find_legs_solution(self, heightmaps, eps=0.05):
         """find a solution and publish the result for all the four wheels"""
-        min_height = [np.min(hmap[1]) for hmap in heightmaps]
+        min_height = [np.min(hmap) for hmap in heightmaps]
         min_height = min(min_height)
-        max_height =  [np.max(hmap[1]) for hmap in heightmaps]
+        max_height =  [np.max(hmap) for hmap in heightmaps]
         max_height = max(max_height)
         max_height = max(max_height, constants.ARM_LENGTH)
         heights = np.linspace(min_height, np.max(hmap[1])+constants.ARM_LENGTH, 100)
@@ -108,7 +142,7 @@ class ToFSuspensionController:
         thetas = []
         for height in heights:
             # test if it is possible to find a valid angle for every wheel
-            thetas = np.array([self.find_theta(height, hmap[0], hmap[1], eps) for hmap in heightmaps])
+            thetas = np.array([self.find_theta(height, hmap, eps) for hmap in heightmaps])
             if np.alltrue(thetas > 0):
                 # a solution for all the four wheel was found, so we can set these angles
                 self.wheel1_cmd_pub(thetas[0])
@@ -121,7 +155,7 @@ class ToFSuspensionController:
 class debug_draw:
     def __init__(self, model):
         self.model = model
-    
+
     def draw_rect(ax, x, y, w, h):
         ax.add_patch(patches.Rectangle(
                                        (x, y),     # (x,y)
@@ -138,13 +172,12 @@ class debug_draw:
                 #for n in range(0, 4):
                 self.draw_rect(ax, dx*i, n*dx, dx, dx)
             self.draw_rect(ax, dx*i, top_n*dx, dx, (y[i]-top_n*dx))
-    
+
     def draw_leg(self, height, theta):
         """ draw a leg on the 2D terrain """
         end_point = (np.sin(theta)*constants.ARM_LENGTH, height-constants.ARM_LENGTH*np.cos(theta))
         plt.plot(end_point[0], end_point[1], 'ro', markersize=3)
         plt.plot([0, end_point[0]], [height, end_point[1]] , 'r-', markersize=3)
-
 
     def draw_legs_solution(self, heightmaps, eps=0.05):
         """ find a solution and draw the heightmap and the legs for all the four wheels"""
@@ -187,4 +220,3 @@ if __name__ == '__main__':
         
         rospy.spin()
     except rospy.ROSInterruptException: pass
-
