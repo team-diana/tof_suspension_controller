@@ -73,6 +73,8 @@ class ToFSuspensionController:
         corner.point.y = 0
         corner.header.frame_id = 'rover_amalia_leg_wheel' % wheel_name
 
+        rospy.logdebug("Getting heightmap for wheel: %d [%s] => TF frame name: %s", wheel_id, wheel_name, corner.header.frame_id)
+
         req = HeightmapRequest()
 
         # Note we use x=1 because we use a strip as the rover cannot move sideways directly
@@ -101,7 +103,7 @@ class ToFSuspensionController:
 
         return heightmaps
 
-    def find_theta(self, height, hmap, eps=0.05):
+    def __find_theta(self, height, hmap, eps=0.05):
         thetas = np.linspace(0.1, np.pi/2, 1000)
         dx = 1
 #        dx = np.abs(hmap_x[1] - hmap_x[0])
@@ -124,8 +126,8 @@ class ToFSuspensionController:
                 tests =  A  > B
                 if np.alltrue(tests):
                     # the arm does not collide with the terrain, return the angle as solution
-                    #print("Solution for height {} is {} - eps: {} ".format(self.req_height, th, e))
-                    #print("x is {}  y is {} - i : {} ".format(x, y, i))
+                    rospy.logdebug("Solution for height {} is {} - eps: {} ".format(self.req_height, th, e))
+                    rospy.logdebug("x is {}  y is {} - i : {} ".format(x, y, i))
                     return th
         # no solution found for the given height
         return -1
@@ -142,7 +144,7 @@ class ToFSuspensionController:
         thetas = []
         for height in heights:
             # test if it is possible to find a valid angle for every wheel
-            thetas = np.array([self.find_theta(height, hmap, eps) for hmap in heightmaps])
+            thetas = np.array([self.__find_theta(height, hmap, eps) for hmap in heightmaps])
             if np.alltrue(thetas > 0):
                 # a solution for all the four wheel was found, so we can set these angles
                 self.wheel1_cmd_pub(thetas[0])
@@ -151,6 +153,7 @@ class ToFSuspensionController:
                 self.wheel4_cmd_pub(thetas[3])
                 return True
         return False
+
 
 class debug_draw:
     def __init__(self, model):
@@ -164,6 +167,7 @@ class debug_draw:
                                        fill=False
                                        )
                      )
+
     def draw_heightmap(ax, x, y):
         dx = np.abs(x[1] - x[0])
         for i in range(0, len(x)):
@@ -212,10 +216,23 @@ class debug_draw:
 if __name__ == '__main__':
     try:
         controller = ToFSuspensionController()
-        for arm in range(1, 4):
-            pass
+
         while not rospy.is_shutdown():
-            controller.find_theta()
+            now = rospy.get_rostime()
+            heightmaps = controller.get_heightmaps()
+            later = rospy.get_rostime()
+            took = later - now
+
+            rospy.lofinfo("getting the heighmap took: %i seconds and %i nanoseconds", took.secs, took.nsecs)
+
+            now = rospy.get_rostime()
+            contorller.find_legs_solution(heightmaps)
+            later = rospy.get_rostime()
+            took = later - now
+
+            rospy.loginfo("finding a solution took: %i seconds and %i nanoseconds", took.secs, took.nsecs)
+
+            # Time to wait before asking for another solution from the algorithm
             rospy.Rate(40).sleep()
         
         rospy.spin()
