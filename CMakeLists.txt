@@ -12,10 +12,10 @@ find_package(catkin REQUIRED COMPONENTS
 
 catkin_python_setup()
 
-add_message_files(
-  FILES
-  HeightmapRequest.msg
-)
+# add_message_files(
+#   FILES
+#   HeightmapRequest.msg
+# )
 
 #add_service_files(
 #  FILES
@@ -25,6 +25,7 @@ generate_messages(
   DEPENDENCIES
   std_msgs
   geometry_msgs
+  heightmap
 )
 
 catkin_package(

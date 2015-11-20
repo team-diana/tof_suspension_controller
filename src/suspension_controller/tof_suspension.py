@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # This file is released under the MIT license, for
 # more details, please consult the LICENSE file.
 #
@@ -9,104 +7,70 @@
 
 ## TODO merge this code with the other suspension based on range finder from Mattia's work
 
-import noise
-from scipy.interpolate import UnivariateSpline as spline
-from scipy.interpolate import interp1d
 import numpy as np
-import matplotlib.pyplot as plt
-import scipy.interpolate as interpolate
-from mpl_toolkits.mplot3d import axes3d, Axes3D
-import matplotlib.patches as patches
 import random
-
-%matplotlib inline
+from contextlib import contextmanager
 
 import rospy
 
 from std_msgs.msg import Float64
 from geometry_msgs.msg import PointStamped
-from heightmap.srv import Query
+import heightmap.srv
 
-from suspension_controller.constants import constants
-from suspension_controller.msg import HeightmapRequest
+import constants
 
 class ToFSuspensionController:
     def __init__(self):
-        rpspy.init_node('tof_suspension_controller', anonymous=True, log_level=rospy.DEBUG)
-        rospy.on_shutdown(self.__unpublish)
+        rospy.init_node('tof_suspension_controller', anonymous=True, log_level=rospy.DEBUG)
+        rospy.on_shutdown(self.unregister)
 
-        self.__publish()
+        self.wheel1_cmd_pub = rospy.Publisher('/suspension1/state', Float64, queue_size=100)
+        self.wheel2_cmd_pub = rospy.Publisher('/suspension2/state', Float64, queue_size=100)
+        self.wheel3_cmd_pub = rospy.Publisher('/suspension3/state', Float64, queue_size=100)
+        self.wheel4_cmd_pub = rospy.Publisher('/suspension4/state', Float64, queue_size=100)
 
-        rospy.loginfo("TOF SUSPENSION CONTROLLER")
+        rospy.loginfo("Waiting for service 'heightmap_query'...")
+        rospy.wait_for_service('heightmap')
+        self.heightmap_query_srv = rospy.ServiceProxy('heightmap', heightmap.srv.Query)
 
-    def __publish(self):
-        self.wheel1_cmd_pub = rospy.Publisher('/suspension1/state', Float64)
-        self.wheel2_cmd_pub = rospy.Publisher('/suspension2/state', Float64)
-        self.wheel3_cmd_pub = rospy.Publisher('/suspension3/state', Float64)
-        self.wheel4_cmd_pub = rospy.Publisher('/suspension4/state', Float64)
+        rospy.loginfo("Started")
 
-        rospy.wait_for_service('heightmap_query')
-        self.heightmap_query_srv = rospy.ServiceProxy('heightmap_query', Query)
-
-    def __unpublish(self):
+    def unregister(self):
         self.wheel1_cmd_pub.unregister()
         self.wheel2_cmd_pub.unregister()
         self.wheel3_cmd_pub.unregister()
         self.wheel4_cmd_pub.unregister()
 
+    ## XXX: check these numbers with the rover
+    WHEEL_NAMES = ['f_r', 'f_l', 'b_r', 'b_l']
+
     def get_heightmap(self, wheel_id):
-        ## XXX: check these numbers with the rover
-        if wheel_id == 1:
-            wheel_name = 'f_r'
-        elif wheel_id == 2:
-            wheel_name = 'f_l'
-        elif wheel_id == 3:
-            wheel_name = 'b_r'
-        elif wheel_id == 4:
-            wheel_name = 'b_l'
-        else:
-            rospy.logwarn("incorrect wheel id provided, use 1-4 values only")
-            return []
+        wheel_name = self.WHEEL_NAMES[wheel_id]
 
         corner = PointStamped()
         corner.point.x = 0
         corner.point.y = 0
-        corner.header.frame_id = 'rover_amalia_leg_wheel' % wheel_name
+        corner.header.frame_id = 'rover_amalia_leg_wheel_' + wheel_name
 
-        rospy.logdebug("Getting heightmap for wheel: %d [%s] => TF frame name: %s", wheel_id, wheel_name, corner.header.frame_id)
+        rospy.logdebug("Getting heightmap for wheel: #%d [%s] => TF frame name: %s",
+                       wheel_id, wheel_name, corner.header.frame_id)
 
-        req = HeightmapRequest()
-
-        # Note we use x=1 because we use a strip as the rover cannot move sideways directly
-        # y_samples chosen arbitrarily
-        req.corner = corner
-        req.x_size = 1
-        req.y_size = contants.ARM_LENGTH
-        req.x_samples = 1
-        req.y_samples = 1000
-
-        res = heightmap_query_srv(corner=corner)
-        self.sizex =  res.x_samples
-        self.sizey = res.y_samples
-        self.heightmap = np.array(res.map, dtype=np.float64)
+        # Note we use x_size=1 because we use a strip as the rover
+        # cannot move sideways directly y_samples chosen arbitrarily
+        res = self.heightmap_query_srv(corner=corner,
+                                       x_size=1,
+                                       y_size=constants.ARM_LENGTH,
+                                       x_samples=1,
+                                       y_samples=1000)
+        return np.array(res.map).reshape(res.y_samples, res.x_samples)
 
     def get_heightmaps(self):
-        heightmaps = []
+        return [self.get_heightmap(i) for i in (1, 2, 3, 4)]
 
-        for i in range(1, 4):
-            hm = self.get_heightmap(i)
-            if not hm:
-                rospy.logwarn("get_heightmaps error getting correct maps")
-                return []
-            ## XXX WRONG dx=1
-            heightmaps.append(hm)
-
-        return heightmaps
-
-    def __find_theta(self, height, hmap, eps=0.05):
+    def _find_theta(self, height, hmap, eps=0.05):
         thetas = np.linspace(0.1, np.pi/2, 1000)
         dx = 1
-#        dx = np.abs(hmap_x[1] - hmap_x[0])
+        # dx = np.abs(hmap_x[1] - hmap_x[0])
         for th in thetas:
             # compute the wheel x position
             x = constants.ARM_LENGTH * np.sin(th)
@@ -144,7 +108,7 @@ class ToFSuspensionController:
         thetas = []
         for height in heights:
             # test if it is possible to find a valid angle for every wheel
-            thetas = np.array([self.__find_theta(height, hmap, eps) for hmap in heightmaps])
+            thetas = np.array([self._find_theta(height, hmap, eps) for hmap in heightmaps])
             if np.alltrue(thetas > 0):
                 # a solution for all the four wheel was found, so we can set these angles
                 self.wheel1_cmd_pub(thetas[0])
@@ -155,85 +119,37 @@ class ToFSuspensionController:
         return False
 
 
-class debug_draw:
-    def __init__(self, model):
-        self.model = model
+@contextmanager
+def measure_time(task_description):
+    init_time = rospy.get_rostime()
+    yield
+    end_time = rospy.get_rostime()
+    elapsed_time = later - now
 
-    def draw_rect(ax, x, y, w, h):
-        ax.add_patch(patches.Rectangle(
-                                       (x, y),     # (x,y)
-                                       w,          # width
-                                       h,          # height
-                                       fill=False
-                                       )
-                     )
+    rospy.loginfo("Time elapsed to {}: {} secs"
+                  .format(task_description, elapsed_time.secs))
 
-    def draw_heightmap(ax, x, y):
-        dx = np.abs(x[1] - x[0])
-        for i in range(0, len(x)):
-            top_n = np.floor(y[i]/dx)
-            for n in range(0, int(top_n)):
-                #for n in range(0, 4):
-                self.draw_rect(ax, dx*i, n*dx, dx, dx)
-            self.draw_rect(ax, dx*i, top_n*dx, dx, (y[i]-top_n*dx))
 
-    def draw_leg(self, height, theta):
-        """ draw a leg on the 2D terrain """
-        end_point = (np.sin(theta)*constants.ARM_LENGTH, height-constants.ARM_LENGTH*np.cos(theta))
-        plt.plot(end_point[0], end_point[1], 'ro', markersize=3)
-        plt.plot([0, end_point[0]], [height, end_point[1]] , 'r-', markersize=3)
+## TODO add solution for 4 arms
+## TODO Catch and log exceptions?
+def main():
+    controller = ToFSuspensionController()
+    rate = rospy.Rate(40).sleep()
 
-    def draw_legs_solution(self, heightmaps, eps=0.05):
-        """ find a solution and draw the heightmap and the legs for all the four wheels"""
-        min_height = [np.min(hmap[1]) for hmap in heightmaps]
-        min_height = min(min_height)
-        max_height =  [np.max(hmap[1]) for hmap in heightmaps]
-        max_height = max(max_height)
-        max_height = max(max_height, constants.ARM_LENGTH)
-        heights = np.linspace(min_height, np.max(hmap[1])+constants.ARM_LENGTH, 100)
-        heights = heights[::-1]
-        thetas = []
-        sol_found = False
-        for height in heights:
-            # test if it is possible to find a valid angle for every wheel
-            thetas = np.array([self.model.find_theta(height, hmap[0], hmap[1], eps) for hmap in heightmaps])
-            if np.alltrue(thetas > 0):
-                # a solution for all the four wheel was found
-                sol_found = True
-                break
-        fig = plt.figure(figsize=(10, 10))
-        for i in range(0, 4):
-            hmap = heightmaps[i]
-            ax = fig.add_subplot(2,2, i+1)
-            ax.set_title("leg {} theta: {} ".format(i, np.rad2deg(thetas[i])))
-            ax.set_ylabel("height (m)")
-            ax.axis([0, 0.6, 0, 0.6])
-            self.draw_heightmap(ax, hmap[0], hmap[1])
-            if sol_found > 0:
-                self.draw_leg(height, thetas[i])
-
-#### TODO add solution for 4 arms
-if __name__ == '__main__':
     try:
-        controller = ToFSuspensionController()
-
         while not rospy.is_shutdown():
-            now = rospy.get_rostime()
-            heightmaps = controller.get_heightmaps()
-            later = rospy.get_rostime()
-            took = later - now
+            with measure_time("get the heightmaps"):
+                heightmaps = controller.get_heightmaps()
 
-            rospy.lofinfo("getting the heighmap took: %i seconds and %i nanoseconds", took.secs, took.nsecs)
+            with measure_time("find a solution"):
+                controller.find_legs_solution(heightmaps)
 
-            now = rospy.get_rostime()
-            contorller.find_legs_solution(heightmaps)
-            later = rospy.get_rostime()
-            took = later - now
+            rate.sleep()
 
-            rospy.loginfo("finding a solution took: %i seconds and %i nanoseconds", took.secs, took.nsecs)
+    except rospy.ROSInterruptException:
+        # Usually thrown by the user terminating the process (e.g. by
+        # pressing C-c)
+        pass
 
-            # Time to wait before asking for another solution from the algorithm
-            rospy.Rate(40).sleep()
-        
-        rospy.spin()
-    except rospy.ROSInterruptException: pass
+if __name__ == '__main__':
+    main()
