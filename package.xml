@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package>
 	<name>tof_suspension_controller</name>
-	<version>0.1.0</version>
+	<version>0.2.0</version>
 	<description>The ToF suspension controller package, see README.md file for more details.</description>
 
 	<maintainer email="tamer@tamersaadeh.com">Tamer Saadeh</maintainer>

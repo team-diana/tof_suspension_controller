@@ -1,11 +1,11 @@
+#!/usr/bin/env python
+
 # This file is released under the MIT license, for
 # more details, please consult the LICENSE file.
 #
 # Copyright (c) 2015, Tamer Saadeh <tamer@tamersaadeh.com>
 # All rights reserved.
 #
-
-## TODO merge this code with the other suspension based on range finder from Mattia's work
 
 import numpy as np
 import random
@@ -22,12 +22,9 @@ import constants
 class ToFSuspensionController:
     def __init__(self):
         rospy.init_node('tof_suspension_controller', anonymous=True, log_level=rospy.DEBUG)
-        rospy.on_shutdown(self.unregister)
 
-        self.wheel1_cmd_pub = rospy.Publisher('/suspension1/state', Float64, queue_size=100)
-        self.wheel2_cmd_pub = rospy.Publisher('/suspension2/state', Float64, queue_size=100)
-        self.wheel3_cmd_pub = rospy.Publisher('/suspension3/state', Float64, queue_size=100)
-        self.wheel4_cmd_pub = rospy.Publisher('/suspension4/state', Float64, queue_size=100)
+        self.suspension_interface = SuspensionInteface()
+        self.suspension_interface.start()
 
         rospy.loginfo("Waiting for service 'heightmap_query'...")
         rospy.wait_for_service('heightmap')
@@ -35,21 +32,11 @@ class ToFSuspensionController:
 
         rospy.loginfo("Started")
 
-    def unregister(self):
-        self.wheel1_cmd_pub.unregister()
-        self.wheel2_cmd_pub.unregister()
-        self.wheel3_cmd_pub.unregister()
-        self.wheel4_cmd_pub.unregister()
-
-    ## XXX: check these
-    WHEEL_NAMES = ['rover_amalia_leg_wheel_' + wheel_name
-                   for wheel_name in 'f_r', 'f_l', 'b_r', 'b_l']
-
-    def get_heightmap(self, wheel_name):
+    def get_heightmap(self, tf_frame_id):
         rospy.logdebug("Getting heightmap for wheel: {}".format(wheel_name))
 
         corner = PointStamped()
-        corner.header.frame_id = wheel_name
+        corner.header.frame_id = tf_frame_id
         corner.point.x = 0
         corner.point.y = 0
         corner.header.stamp = rospy.Time(0)
@@ -59,20 +46,19 @@ class ToFSuspensionController:
                                        x_size=1,
                                        y_size=constants.ARM_LENGTH,
                                        x_samples=1,
-                                       y_samples=1000)
+                                       y_samples=constants.SAMPLES)
         return np.array(res.map).reshape(res.y_samples, res.x_samples)
 
     def get_heightmaps(self):
-        return [self.get_heightmap(wheel_name) for wheel_name in self.WHEEL_NAMES]
+        tf_frames = ['rover_amalia_leg_wheel_' + motor.name for motor in self.suspension_interface.motor_interface]
+        return [self.get_heightmap(tf_frame_id) for tf_frame_id in tf_frames]
 
-    def _find_theta(self, height, hmap, eps=0.05):
-        thetas = np.linspace(0.1, np.pi/2, 1000)
-        dx = 1
-        # dx = np.abs(hmap_x[1] - hmap_x[0])
+    def _find_theta(self, height, hmap, eps=constants.DEFAULT_EPSILON):
+        thetas = np.linspace(0.1, np.pi/2, constants.SAMPLES)
         for th in thetas:
             # compute the wheel x position
             x = constants.ARM_LENGTH * np.sin(th)
-            i = int(np.floor(x / dx))
+            i = int(np.floor(x))
             # compute the wheel height from the requested height
             y = height - constants.ARM_LENGTH * np.cos(th)
             # distance from terrain:
@@ -80,11 +66,11 @@ class ToFSuspensionController:
             if e < eps:
                 # ok, we have found a good angle. But are the
                 # constraint satisfied?
-                testx = np.arange(0, i)*dx
-                cotan_th = 1/np.tan(th)
+                testx = np.arange(0, i)
+                cotan_th = 1 / np.tan(th)
                 # test if the arm is always above the terrain surface
-                A = (- testx*cotan_th + height)
-                B = hmap_y[0:i]
+                A = (-testx * cotan_th + height)
+                B = hmap[0:i]
                 tests =  A  > B
                 if np.alltrue(tests):
                     # the arm does not collide with the terrain, return the angle as solution
@@ -94,14 +80,14 @@ class ToFSuspensionController:
         # no solution found for the given height
         return -1
 
-    def find_legs_solution(self, heightmaps, eps=0.05):
+    def find_legs_solution(self, heightmaps, eps=constants.DEFAULT_EPSILON):
         """find a solution and publish the result for all the four wheels"""
         min_height = [np.min(hmap) for hmap in heightmaps]
         min_height = min(min_height)
         max_height =  [np.max(hmap) for hmap in heightmaps]
         max_height = max(max_height)
         max_height = max(max_height, constants.ARM_LENGTH)
-        heights = np.linspace(min_height, np.max(hmap[1])+constants.ARM_LENGTH, 100)
+        heights = np.linspace(min_height, np.max(hmap[1]) + constants.ARM_LENGTH, constants.SAMPLES)
         heights = heights[::-1]
         thetas = []
         for height in heights:
@@ -109,14 +95,13 @@ class ToFSuspensionController:
             thetas = np.array([self._find_theta(height, hmap, eps) for hmap in heightmaps])
             if np.alltrue(thetas > 0):
                 # a solution for all the four wheel was found, so we can set these angles
-                self.wheel1_cmd_pub(thetas[0])
-                self.wheel2_cmd_pub(thetas[1])
-                self.wheel3_cmd_pub(thetas[2])
-                self.wheel4_cmd_pub(thetas[3])
+                for i, motor in enumerate(self.suspension_interface.motor_interface):
+                    if thetas[i] == -1: return False
+                    motor.suspension_command(thetas[i])
                 return True
         return False
 
-
+# TODO: maybe we should have it in a util, that others can use too?
 @contextmanager
 def measure_time(task_description):
     init_time = rospy.get_rostime()
@@ -124,13 +109,11 @@ def measure_time(task_description):
     end_time = rospy.get_rostime()
     elapsed_time = end_time - init_time
 
-    rospy.loginfo("Time elapsed to {}: {} secs"
-                  .format(task_description, elapsed_time.secs))
+    rospy.loginfo("Time elapsed to {}: {} secs".format(task_description, elapsed_time.secs))
 
 
-## TODO add solution for 4 arms
 ## TODO Catch and log exceptions?
-def main():
+if __name__ == '__main__':
     controller = ToFSuspensionController()
     rate = rospy.Rate(40)
 
@@ -139,8 +122,9 @@ def main():
             with measure_time("get the heightmaps"):
                 heightmaps = controller.get_heightmaps()
 
-            with measure_time("find a solution"):
-                controller.find_legs_solution(heightmaps)
+            with measure_time("search for a solution"):
+                if not controller.find_legs_solution(heightmaps):
+                    rospy.logwarn("Failed to find a feasible solution!")
 
             rate.sleep()
 
@@ -148,6 +132,3 @@ def main():
         # Usually thrown by the user terminating the process (e.g. by
         # pressing C-c)
         pass
-
-if __name__ == '__main__':
-    main()
