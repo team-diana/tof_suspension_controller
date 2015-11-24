@@ -41,20 +41,18 @@ class ToFSuspensionController:
         self.wheel3_cmd_pub.unregister()
         self.wheel4_cmd_pub.unregister()
 
-    ## XXX: check these numbers with the rover
-    WHEEL_NAMES = ['f_r', 'f_l', 'b_r', 'b_l']
+    ## XXX: check these
+    WHEEL_NAMES = ['rover_amalia_leg_wheel_' + wheel_name
+                   for wheel_name in 'f_r', 'f_l', 'b_r', 'b_l']
 
-    def get_heightmap(self, wheel_id):
-        wheel_name = self.WHEEL_NAMES[wheel_id]
+    def get_heightmap(self, wheel_name):
+        rospy.logdebug("Getting heightmap for wheel: {}".format(wheel_name))
 
         corner = PointStamped()
+        corner.header.frame_id = wheel_name
         corner.point.x = 0
         corner.point.y = 0
-        corner.header.frame_id = 'rover_amalia_leg_wheel_' + wheel_name
-
-        rospy.logdebug("Getting heightmap for wheel: #%d [%s] => TF frame name: %s",
-                       wheel_id, wheel_name, corner.header.frame_id)
-
+        corner.header.stamp = rospy.Time(0)
         # Note we use x_size=1 because we use a strip as the rover
         # cannot move sideways directly y_samples chosen arbitrarily
         res = self.heightmap_query_srv(corner=corner,
@@ -65,7 +63,7 @@ class ToFSuspensionController:
         return np.array(res.map).reshape(res.y_samples, res.x_samples)
 
     def get_heightmaps(self):
-        return [self.get_heightmap(i) for i in (1, 2, 3, 4)]
+        return [self.get_heightmap(wheel_name) for wheel_name in self.WHEEL_NAMES]
 
     def _find_theta(self, height, hmap, eps=0.05):
         thetas = np.linspace(0.1, np.pi/2, 1000)
@@ -76,7 +74,7 @@ class ToFSuspensionController:
             x = constants.ARM_LENGTH * np.sin(th)
             i = int(np.floor(x / dx))
             # compute the wheel height from the requested height
-            y = self.req_height - constants.ARM_LENGTH * np.cos(th)
+            y = height - constants.ARM_LENGTH * np.cos(th)
             # distance from terrain:
             e = np.abs(hmap[i] - y)
             if e < eps:
@@ -90,7 +88,7 @@ class ToFSuspensionController:
                 tests =  A  > B
                 if np.alltrue(tests):
                     # the arm does not collide with the terrain, return the angle as solution
-                    rospy.logdebug("Solution for height {} is {} - eps: {} ".format(self.req_height, th, e))
+                    rospy.logdebug("Solution for height {} is {} - eps: {} ".format(height, th, e))
                     rospy.logdebug("x is {}  y is {} - i : {} ".format(x, y, i))
                     return th
         # no solution found for the given height
@@ -124,7 +122,7 @@ def measure_time(task_description):
     init_time = rospy.get_rostime()
     yield
     end_time = rospy.get_rostime()
-    elapsed_time = later - now
+    elapsed_time = end_time - init_time
 
     rospy.loginfo("Time elapsed to {}: {} secs"
                   .format(task_description, elapsed_time.secs))
@@ -134,7 +132,7 @@ def measure_time(task_description):
 ## TODO Catch and log exceptions?
 def main():
     controller = ToFSuspensionController()
-    rate = rospy.Rate(40).sleep()
+    rate = rospy.Rate(40)
 
     try:
         while not rospy.is_shutdown():
