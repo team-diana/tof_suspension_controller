@@ -5,9 +5,9 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   roscpp
   std_msgs
+  heightmap
   message_generation
   tf
-  heightmap
 )
 
 catkin_python_setup()
@@ -24,7 +24,6 @@ generate_messages(
   DEPENDENCIES
   std_msgs
   geometry_msgs
-  heightmap
 )
 
 catkin_package(

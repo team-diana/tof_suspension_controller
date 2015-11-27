@@ -16,6 +16,7 @@
 	<build_depend>roscpp</build_depend>
 	<build_depend>rospy</build_depend>
 	<build_depend>std_msgs</build_depend>
+	<build_depend>heightmap</build_depend>
 	<build_depend>message_generation</build_depend>
 
 	<!-- runtime dependencies -->
@@ -23,8 +24,8 @@
 	<run_depend>rospy</run_depend>
 	<run_depend>std_msgs</run_depend>
 	<run_depend>numpy</run_depend>
-    <run_depend>tf</run_depend>
-    <run_depend>heightmap</run_depend>
+	<run_depend>tf</run_depend>
+	<run_depend>heightmap</run_depend>
 
 	<export>
 		<!-- You can specify that this package is a metapackage here: -->
