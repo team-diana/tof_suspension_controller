@@ -19,6 +19,8 @@ import heightmap.srv
 
 import constants
 
+from suspension_interface_node import SuspensionInteface
+
 class ToFSuspensionController:
     def __init__(self):
         rospy.init_node('tof_suspension_controller', anonymous=True, log_level=rospy.DEBUG)
