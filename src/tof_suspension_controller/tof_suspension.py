@@ -50,7 +50,9 @@ class ToFSuspensionController:
         return np.array(res.map).reshape(res.y_samples, res.x_samples)
 
     def get_heightmaps(self):
-        tf_frames = ['rover_amalia_leg_wheel_' + motor.name for motor in self.suspension_interface.motor_interface]
+        tf_frames = []
+        for motor in self.suspension_interface.motor_interface:
+            tf_frames.append('rover_amalia_leg_wheel_' + motor.name)
         return [self.get_heightmap(tf_frame_id) for tf_frame_id in tf_frames]
 
     def _find_theta(self, height, hmap, eps=constants.DEFAULT_EPSILON):
