@@ -59,7 +59,7 @@ class SuspensionInteface:
         rospy.spin()
 
     def unregister(self):
-        motor.unregister() for motor in self.motor_interfaces
+        [motor.unregister() for motor in self.motor_interfaces]
 
 if __name__ == '__main__':
     interface = SuspensionInteface()
