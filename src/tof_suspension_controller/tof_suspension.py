@@ -35,7 +35,7 @@ class ToFSuspensionController:
         rospy.loginfo("Started")
 
     def get_heightmap(self, tf_frame_id):
-        rospy.logdebug("Getting heightmap for wheel: {}".format(wheel_name))
+        rospy.logdebug("Getting heightmap for tf frame: {}".format(tf_frame_id))
 
         corner = PointStamped()
         corner.header.frame_id = tf_frame_id
@@ -53,7 +53,7 @@ class ToFSuspensionController:
 
     def get_heightmaps(self):
         tf_frames = []
-        for motor in self.suspension_interface.motor_interface:
+        for motor in self.suspension_interface.motor_interfaces:
             tf_frames.append('rover_amalia_leg_wheel_' + motor.name)
         return [self.get_heightmap(tf_frame_id) for tf_frame_id in tf_frames]
 
@@ -99,7 +99,7 @@ class ToFSuspensionController:
             thetas = np.array([self._find_theta(height, hmap, eps) for hmap in heightmaps])
             if np.alltrue(thetas > 0):
                 # a solution for all the four wheel was found, so we can set these angles
-                for i, motor in enumerate(self.suspension_interface.motor_interface):
+                for i, motor in enumerate(self.suspension_interface.motor_interfaces):
                     if thetas[i] == -1: return False
                     motor.suspension_command(thetas[i])
                 return True
