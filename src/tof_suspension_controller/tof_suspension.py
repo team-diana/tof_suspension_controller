@@ -88,10 +88,12 @@ class ToFSuspensionController:
         """find a solution and publish the result for all the four wheels"""
         min_height = [np.min(hmap) for hmap in heightmaps]
         min_height = min(min_height)
+
         max_height =  [np.max(hmap) for hmap in heightmaps]
         max_height = max(max_height)
-        max_height = max(max_height, constants.ARM_LENGTH)
-        heights = np.linspace(min_height, np.max(hmap[1]) + constants.ARM_LENGTH, constants.SAMPLES)
+        max_height = max(max_height, max_height + constants.ARM_LENGTH)
+
+        heights = np.linspace(min_height, max_height, constants.SAMPLES)
         heights = heights[::-1]
         thetas = []
         for height in heights:
